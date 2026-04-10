@@ -18,10 +18,19 @@ def create_app():
     UPLOAD_DIR = os.path.join(BASE_DIR, 'uploads')
     os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-    app.config['SECRET_KEY'] = 'super-secret-staymatch-key-123'
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:@localhost/staymatch'
+    # ── Production-safe config ──────────────────────────────────────────────
+    # Set DATABASE_URL and SECRET_KEY as environment variables on your server.
+    # Fallback to local XAMPP values for local development only.
+    app.config['SECRET_KEY'] = os.environ.get(
+        'SECRET_KEY', 'super-secret-staymatch-key-123'
+    )
+    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get(
+        'DATABASE_URL',
+        'mysql+pymysql://root:@localhost/staymatch'   # local fallback
+    )
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50 MB max upload
+    # ────────────────────────────────────────────────────────────────────────
 
     # Serve uploaded media (images/videos) – including sub-directories like /uploads/rooms/
     @app.route('/uploads/<path:filename>')
@@ -48,22 +57,28 @@ def create_app():
 
     return app
 
+
+# ── Expose app at module level so gunicorn can find it ─────────────────────
+# On your server run:  gunicorn app:app
+app = create_app()
+
+with app.app_context():
+    db.create_all()
+    from seed import seed_database
+    seed_database()
+
+
 if __name__ == '__main__':
-    app = create_app()
-    with app.app_context():
-        # Automatically create the MySQL database if it doesn't exist
-        import pymysql
-        try:
-            conn = pymysql.connect(host='localhost', user='root', password='')
-            conn.cursor().execute('CREATE DATABASE IF NOT EXISTS staymatch;')
-            conn.close()
-        except Exception as e:
-            print("Could not auto-create database (make sure XAMPP MySQL is running!):", e)
+    # Local development only — auto-create MySQL DB via XAMPP
+    import pymysql
+    try:
+        conn = pymysql.connect(host='localhost', user='root', password='')
+        conn.cursor().execute('CREATE DATABASE IF NOT EXISTS staymatch;')
+        conn.close()
+    except Exception as e:
+        print("Could not auto-create database (make sure XAMPP MySQL is running!):", e)
 
-        db.create_all()
-        from seed import seed_database
-        seed_database()
     print("StayMatch Backend running at http://127.0.0.1:5000")
-    print("Database: MySQL via XAMPP (staymatch) restarted")
-    app.run(debug=True, host='0.0.0.0', port=5000)
-
+    # debug=False is safe for production; True only for local dev
+    app.run(debug=os.environ.get('FLASK_DEBUG', 'false').lower() == 'true',
+            host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
